@@ -1,0 +1,454 @@
+// controllers/authController.js
+import User from '../models/User.js';
+import ClientUser from '../models/ClientUser.js';
+import ResponseHandler from '../utils/responseHandler.js';
+import { sendVerificationEmail, sendPasswordResetEmail } from '../config/emailConfig.js';
+import { generateToken } from '../middlewares/authMiddleware.js';
+
+const normalizeFullName = (fullName) => {
+  if (!fullName || typeof fullName !== 'string') {
+    return { firstName: undefined, lastName: undefined };
+  }
+
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return { firstName: undefined, lastName: undefined };
+  }
+
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: '-' };
+  }
+
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' ')
+  };
+};
+
+const normalizeIdentifier = (value) => {
+  if (!value || typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : undefined;
+};
+
+export const register = async (req, res) => {
+  try {
+    const email = normalizeIdentifier(req.body.email);
+    const password = req.body.password;
+
+    const providedFirstName = normalizeIdentifier(req.body.firstName);
+    const providedLastName = normalizeIdentifier(req.body.lastName);
+    const providedPhoneNumber = normalizeIdentifier(req.body.phoneNumber);
+
+    const fullNameCandidate = normalizeIdentifier(req.body.fullName) ||
+      normalizeIdentifier(req.body.name) ||
+      normalizeIdentifier(req.body.username);
+    const normalizedFromFullName = normalizeFullName(fullNameCandidate);
+
+    const firstName = providedFirstName || normalizedFromFullName.firstName;
+    const lastName = providedLastName || normalizedFromFullName.lastName;
+    const phoneNumber = providedPhoneNumber || normalizeIdentifier(req.body.phone) || null;
+
+    if (!email || !password || !firstName || !lastName) {
+      return ResponseHandler.validationError(res, req.t('auth.register.missing_fields'));
+    }
+
+    // Check for existing user
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      if (existingUser.isVerified) {
+        return ResponseHandler.conflict(res, req.t('auth.register.already_registered_login'));
+      } else {
+        return ResponseHandler.validationError(res, req.t('auth.register.verification_pending'));
+      }
+    }
+
+    // Create new user
+    const user = await ClientUser.create({
+      firstName,
+      lastName,
+      email,
+      password
+    });
+    const code = user.generateVerificationCode();
+    await user.save({ validateBeforeSave: false });
+
+    // Send verification email
+    try {
+      const emailResult = await sendVerificationEmail(email, code, firstName);
+      if (!emailResult.success) {
+        return ResponseHandler.serverError(
+          res,
+          req.t('auth.register.email_failed')
+        );
+      }
+    } catch (emailError) {
+      console.error('Email sending failed:', emailError);
+      return ResponseHandler.serverError(
+        res,
+        req.t('auth.register.email_failed')
+      );
+    }
+
+    return ResponseHandler.created(
+      res,
+      req.t('auth.register.success_check_email'),
+      { email, fullName: `${firstName} ${lastName}` }
+    );
+
+  } catch (error) {
+    console.error('Registration error:', error);
+    return ResponseHandler.serverError(res, req.t('auth.register.failed'), error);
+  }
+};
+
+export const verifyEmail = async (req, res) => {
+  try {
+    const email = normalizeIdentifier(req.body.email);
+    const code = normalizeIdentifier(req.body.code) || normalizeIdentifier(req.body.otp);
+
+    // Validate input
+    if (!email || !code) {
+      return ResponseHandler.validationError(res, req.t('auth.verify.missing_fields'));
+    }
+
+    // Find user with valid verification code
+    const user = await ClientUser.findOne({
+      email,
+      verificationCode: code,
+      verificationCodeExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      // Increment failed attempts
+      const failedUser = await ClientUser.findOne({ email });
+      if (failedUser && !failedUser.isVerified) {
+        failedUser.incrementFailedAttempts();
+      }
+      return ResponseHandler.validationError(res, req.t('auth.verify.invalid_or_expired'));
+    }
+
+    // Verify user
+    user.isVerified = true;
+    user.verificationCode = undefined;
+    user.verificationCodeExpires = undefined;
+    user.failedVerificationAttempts = 0;
+    await user.save();
+
+    const token = generateToken(user._id);
+
+    return ResponseHandler.successWithMessage(
+      res,
+      req.t('auth.verify.success'),
+      {
+        token,
+        user: {
+          id: user._id,
+          fullName: `${user.firstName} ${user.lastName}`,
+          email: user.email,
+          avatar: user.avatar || null,
+          createdAt: user.createdAt
+        }
+      }
+    );
+
+  } catch (error) {
+    console.error('Verification error:', error);
+    return ResponseHandler.serverError(res, req.t('auth.verify.failed'), error);
+  }
+};
+
+export const resendVerificationCode = async (req, res) => {
+  try {
+    const email = normalizeIdentifier(req.body.email);
+
+    if (!email) {
+      return ResponseHandler.validationError(res, req.t('auth.resend.email_required'));
+    }
+
+    const user = await ClientUser.findOne({ email });
+
+    if (!user) {
+      return ResponseHandler.notFound(res, req.t('auth.resend.user_not_found'));
+    }
+
+    if (user.isVerified) {
+      return ResponseHandler.validationError(res, req.t('auth.resend.already_verified'));
+    }
+
+    // Rate limiting - 1 minute between resends
+    if (user.verificationCodeResentAt && Date.now() - user.verificationCodeResentAt < 60000) {
+      return ResponseHandler.tooManyRequests(res, req.t('auth.resend.too_many_requests'));
+    }
+
+    // Generate new code
+    const code = user.generateVerificationCode();
+    await user.save({ validateBeforeSave: false });
+
+    // Send email
+    try {
+      await sendVerificationEmail(email, code, user.firstName);
+    } catch (emailError) {
+      console.error('Email sending failed:', emailError);
+      return ResponseHandler.serverError(res, req.t('auth.resend.failed'));
+    }
+
+    return ResponseHandler.successWithMessage(
+      res,
+      req.t('auth.resend.success')
+    );
+
+  } catch (error) {
+    console.error('Resend verification code error:', error);
+    return ResponseHandler.serverError(res, req.t('auth.resend.failed'), error);
+  }
+};
+
+export const login = async (req, res) => {
+  try {
+    const email = normalizeIdentifier(req.body.email);
+    const password = req.body.password;
+
+    // Validate input
+    if (!email || !password) {
+      return ResponseHandler.validationError(res, req.t('auth.login.missing_fields'));
+    }
+
+    // Find user with password
+    const user = await ClientUser.findOne({ email })
+      .select('+password');
+
+    // Validate credentials
+    if (!user || !(await user.comparePassword(password))) {
+      return ResponseHandler.unauthorized(res, req.t('auth.login.invalid_credentials'));
+    }
+
+    // Check if email is verified
+    if (!user.isVerified) {
+      return ResponseHandler.forbidden(res, req.t('auth.login.email_not_verified'));
+    }
+
+    // Discriminator already ensures this is a client user
+
+    // Update last login
+    user.lastLogin = Date.now();
+    await user.save({ validateBeforeSave: false });
+
+    // Generate token
+    const token = generateToken(user._id);
+
+    return ResponseHandler.successWithMessage(
+      res,
+      req.t('auth.login.success'),
+      {
+        token,
+        user: {
+          id: user._id,
+          fullName: `${user.firstName} ${user.lastName}`,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          avatar: user.avatar || null,
+          createdAt: user.createdAt
+        }
+      }
+    );
+
+  } catch (error) {
+    console.error('Login error:', error);
+    return ResponseHandler.serverError(res, req.t('auth.login.failed'), error);
+  }
+};
+
+export const forgotPassword = async (req, res) => {
+  try {
+    const email = normalizeIdentifier(req.body.email);
+
+    if (!email) {
+      return ResponseHandler.validationError(res, req.t('auth.forgot.email_required'));
+    }
+
+    const user = await ClientUser.findOne({ email });
+
+    if (!user) {
+      return ResponseHandler.notFound(res, req.t('auth.forgot.account_not_found'));
+    }
+
+    if (!user.isVerified) {
+      return ResponseHandler.forbidden(
+        res,
+        req.t('auth.forgot.email_not_verified')
+      );
+    }
+
+    // Generate reset code
+    const code = user.generatePasswordResetCode();
+    await user.save({ validateBeforeSave: false });
+
+    // Send email
+    try {
+      await sendPasswordResetEmail(user.email, code, user.firstName);
+    } catch (emailError) {
+      console.error('Email sending failed:', emailError);
+      return ResponseHandler.serverError(res, req.t('auth.forgot.failed'));
+    }
+
+    return ResponseHandler.successWithMessage(
+      res,
+      req.t('auth.forgot.success')
+    );
+
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    return ResponseHandler.serverError(res, req.t('auth.forgot.failed'), error);
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    const email = normalizeIdentifier(req.body.email);
+    const code = normalizeIdentifier(req.body.code) || normalizeIdentifier(req.body.otp);
+    const password = req.body.password || req.body.newPassword;
+    const confirmPassword = req.body.confirmPassword || req.body.confirmNewPassword;
+
+    // Validate input
+    if (!email || !code || !password) {
+      return ResponseHandler.validationError(res, req.t('auth.reset.missing_fields'));
+    }
+
+    if (confirmPassword !== undefined && password !== confirmPassword) {
+      return ResponseHandler.validationError(res, req.t('auth.reset.passwords_not_match'));
+    }
+
+    // Validate password length
+    if (password.length < 6) {
+      return ResponseHandler.validationError(res, req.t('auth.reset.password_too_short'));
+    }
+
+    // Find user with valid reset code
+    const user = await ClientUser.findOne({
+      email,
+      passwordResetCode: code,
+      passwordResetExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return ResponseHandler.validationError(res, req.t('auth.reset.invalid_or_expired'));
+    }
+
+    // Reset password
+    user.password = password;
+    user.passwordResetCode = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save();
+
+    // Generate token
+    const token = generateToken(user._id);
+
+    return ResponseHandler.successWithMessage(
+      res,
+      req.t('auth.reset.success'),
+      { token }
+    );
+
+  } catch (error) {
+    console.error('Reset password error:', error);
+    return ResponseHandler.serverError(res, req.t('auth.reset.failed'), error);
+  }
+};
+
+// Get user profile
+export const getProfile = async (req, res) => {
+  try {
+    const user = await ClientUser.findById(req.user._id)
+      .select('-password');
+
+    if (!user) {
+      return ResponseHandler.notFound(res, req.t('auth.profile.user_not_found'));
+    }
+
+    const fullName = `${user.firstName} ${user.lastName}`.trim();
+
+    return ResponseHandler.success(res, {
+      user: {
+        id: user._id,
+        fullName,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        avatar: user.avatar || null,
+        createdAt: user.createdAt
+      }
+    });
+
+  } catch (error) {
+    console.error('Get profile error:', error);
+    return ResponseHandler.serverError(res, req.t('auth.profile.failed'), error);
+  }
+};
+
+// Change password (for authenticated users including super admin)
+export const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmNewPassword } = req.body;
+
+    // Validate required fields
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+      return ResponseHandler.validationError(
+        res,
+        req.t('auth.change_password.missing_fields')
+      );
+    }
+
+    // Validate new password length
+    if (newPassword.length < 6) {
+      return ResponseHandler.validationError(
+        res,
+        req.t('auth.change_password.too_short')
+      );
+    }
+
+    // Validate new password matches confirmation
+    if (newPassword !== confirmNewPassword) {
+      return ResponseHandler.validationError(
+        res,
+        req.t('auth.change_password.not_match')
+      );
+    }
+
+    // Get user with password field
+    const user = await ClientUser.findById(req.user._id).select('+password');
+
+    if (!user) {
+      return ResponseHandler.notFound(res, req.t('auth.profile.user_not_found'));
+    }
+
+    // Verify current password is correct
+    const isCurrentPasswordCorrect = await user.comparePassword(currentPassword);
+    if (!isCurrentPasswordCorrect) {
+      return ResponseHandler.unauthorized(res, req.t('auth.change_password.current_incorrect'));
+    }
+
+    // Validate new password is different from current password
+    const isSameAsOldPassword = await user.comparePassword(newPassword);
+    if (isSameAsOldPassword) {
+      return ResponseHandler.validationError(
+        res,
+        req.t('auth.change_password.same_as_old')
+      );
+    }
+
+    // Update password
+    user.password = newPassword;
+    await user.save();
+
+    return ResponseHandler.successWithMessage(
+      res,
+      req.t('auth.change_password.success')
+    );
+
+  } catch (error) {
+    console.error('Change password error:', error);
+    return ResponseHandler.serverError(res, req.t('auth.change_password.failed'), error);
+  }
+};

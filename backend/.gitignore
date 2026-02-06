@@ -1,0 +1,54 @@
+# Node/Bun
+node_modules/
+.bun/
+.pnp*
+
+# Nuxt build outputs
+.nuxt/
+.output/
+dist/
+
+# Playwright
+playwright-report/
+test-results/
+
+# Vitest
+coverage/
+
+# Logs
+*.log
+logs/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Private keys / certs
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+id_rsa
+id_rsa.pub
+*.ppk
+
+# Common secret folders/files
+.secrets/
+secrets/
+credentials.json
+
+# OS/IDE
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Misc
+public/fonts/
+public/images/
+public/animations/
