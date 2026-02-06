@@ -172,7 +172,7 @@ app.use((err, req, res, next) => {
 });
 
 // ==================== START SERVER ====================
-const PORT = config.port;
+const PORT = config.port || 3000;
 
 app.listen(PORT, () => {
   console.log("Djulah API Running");
