@@ -6,6 +6,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
+import config from './config/index.js';
 import { localeMiddleware } from './middlewares/localeMiddleware.js';
 
 // Swagger Setup
@@ -39,35 +40,17 @@ app.use(helmet({
 // CORS CONFIGURATION - Development & Production friendly
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like Swagger UI on same domain, mobile apps, curl, Postman)
     if (!origin) return callback(null, true);
 
-    const allowedOrigins = [
-      process.env.CLIENT_URL || 'http://localhost:3000',
-      'https://klarity-dashboard.onrender.com',
-      'https://api.klarity.cm',
-      'http://localhost:5000',
-      'http://localhost:5001',
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://127.0.0.1:5000',
-      'http://127.0.0.1:3000',
-      // Add Render deployment URLs
-      process.env.RENDER_EXTERNAL_URL
-    ].filter(Boolean); // Remove any undefined values
-
-    // In development/testing, allow all origins for easier testing
-    if (process.env.NODE_ENV !== 'production') {
+    if (config.cors.allowAllInDev) {
       console.log(`✅ CORS allowed (dev mode): ${origin}`);
       return callback(null, true);
     }
 
-    // In production, check against whitelist
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    if (config.cors.allowedOrigins.indexOf(origin) !== -1) {
       console.log(`✅ CORS allowed (whitelisted): ${origin}`);
       callback(null, true);
     } else {
-      // Log rejected origins for debugging
       console.warn(`⚠️  CORS rejected origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
@@ -76,8 +59,8 @@ const corsOptions = {
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Accept-Language', 'Time-Zone'],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  maxAge: 86400, // 24 hours
-  optionsSuccessStatus: 200 // Some legacy browsers (IE11, various SmartTVs) choke on 204
+  maxAge: 86400,
+  optionsSuccessStatus: 200
 };
 
 app.use(cors(corsOptions));
@@ -99,7 +82,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ==================== DATABASE CONNECTION ====================
-mongoose.connect(process.env.MONGODB_URI)
+mongoose.connect(config.db.mongoUri)
   .then(() => console.log('MongoDB Connected'))
   .catch(err => {
     console.error('MongoDB connection error:', err.message);
@@ -120,24 +103,11 @@ app.get('/health', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  // Smart URL detection for Render deployment
-  let baseUrl;
-
-  if (process.env.RENDER_EXTERNAL_URL) {
-    // Render automatically provides this variable
-    baseUrl = process.env.RENDER_EXTERNAL_URL;
-  } else if (process.env.NODE_ENV === 'production') {
-    // Fallback for other production environments
-    baseUrl = 'https://klarity-dashboard.onrender.com';
-  } else {
-    // Development mode
-    baseUrl = `http://localhost:${process.env.PORT || 5000}`;
-  }
-
+  const baseUrl = config.publicBaseUrl;
   res.json({
     message: 'Welcome to Djulah API',
     version: '1.0.0',
-    environment: process.env.NODE_ENV || 'development',
+    environment: config.env,
     docs: `${baseUrl}/api-docs`,
     health: `${baseUrl}/health`
   });
@@ -166,12 +136,12 @@ app.use((err, req, res, next) => {
     success: false,
     message: err.message || 'Internal Server Error',
     data: null,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    ...(config.env === 'development' && { stack: err.stack })
   });
 });
 
 // ==================== START SERVER ====================
-const PORT = process.env.PORT || 5000;
+const PORT = config.port;
 
 app.listen(PORT, () => {
   console.log('Djulah API Running');

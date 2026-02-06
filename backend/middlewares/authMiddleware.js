@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import config from '../config/index.js';
 
 export const protect = async (req, res, next) => {
   try {
@@ -18,7 +19,7 @@ export const protect = async (req, res, next) => {
     }
 
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, config.jwt.secret);
 
     // Get user from token
     const user = await User.findById(decoded.id).select('-password');
@@ -31,7 +32,7 @@ export const protect = async (req, res, next) => {
     }
 
     // Check if user is verified (skip in development for easier testing)
-    if (!user.isVerified && process.env.NODE_ENV === 'production') {
+    if (!user.isVerified && config.isProd) {
       return res.status(403).json({
         success: false,
         message: 'Please verify your email before accessing this resource.'
@@ -69,7 +70,7 @@ export const protect = async (req, res, next) => {
 
 // Helper function to generate JWT token
 export const generateToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d'
+  return jwt.sign({ id: userId }, config.jwt.secret, {
+    expiresIn: config.jwt.expiresIn
   });
 };

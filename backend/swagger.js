@@ -1,22 +1,11 @@
 // swagger.js  (root folder)
 import swaggerJSDoc from 'swagger-jsdoc';
 import swaggerUi from 'swagger-ui-express';
+import config from './config/index.js';
 
 // Dynamic server URL based on environment
 const getServerUrl = () => {
-  // Render automatically provides RENDER_EXTERNAL_URL
-  if (process.env.RENDER_EXTERNAL_URL) {
-    return process.env.RENDER_EXTERNAL_URL;
-  }
-
-  // Fallback for other production environments
-  if (process.env.NODE_ENV === 'production') {
-    return 'https://klarity-dashboard.onrender.com';
-  }
-
-  // Development mode
-  const port = process.env.PORT || 5000;
-  return `http://localhost:${port}`;
+  return config.publicBaseUrl;
 };
 
 const options = {
@@ -34,14 +23,14 @@ const options = {
     servers: [
       {
         url: getServerUrl(),
-        description: process.env.NODE_ENV === 'production' ? 'Production Server' : 'Development Server'
+        description: config.isProd ? 'Production Server' : 'Development Server'
       },
       {
-        url: 'http://localhost:5000',
+        url: `http://localhost:${config.port}`,
         description: 'Local Development Server'
       },
       {
-        url: 'https://klarity-dashboard.onrender.com',
+        url: config.publicBaseUrl,
         description: 'Production Server (Djulah)'
       }
     ],
@@ -114,8 +103,7 @@ const swaggerDocs = (app) => {
     res.send(swaggerSpec);
   });
   
-  const port = process.env.PORT || 5000;
-  console.log(`📚 Swagger UI is live at http://localhost:${port}/api-docs`);
+  console.log(`📚 Swagger UI is live at http://localhost:${config.port}/api-docs`);
 };
 
 export default swaggerDocs;

@@ -1,19 +1,21 @@
 // config/emailConfig.js
 
+import config from './index.js';
+
 // Send email using HTTP API (bypasses SMTP port blocking on Render)
 const sendEmailViaHTTP = async (options) => {
   // Use Resend HTTP API (no SMTP ports needed!)
-  if (process.env.RESEND_API_KEY) {
+  if (config.email.resendApiKey) {
     console.log('📧 Using Resend HTTP API (no SMTP ports - works on Render!)');
     try {
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+          'Authorization': `Bearer ${config.email.resendApiKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          from: `Djulah <${process.env.EMAIL_FROM || 'onboarding@resend.dev'}>`,
+          from: `Djulah <${config.email.from}>`,
           to: [options.to],
           subject: options.subject,
           html: options.html
@@ -35,19 +37,19 @@ const sendEmailViaHTTP = async (options) => {
   }
 
   // Use Brevo HTTP API
-  if (process.env.BREVO_API_KEY) {
+  if (config.email.brevoApiKey) {
     console.log('📧 Using Brevo HTTP API (no SMTP ports - works on Render!)');
     try {
       const response = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: {
-          'api-key': process.env.BREVO_API_KEY,
+          'api-key': config.email.brevoApiKey,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           sender: {
             name: 'Djulah',
-            email: process.env.EMAIL_FROM || process.env.BREVO_EMAIL
+            email: config.email.from || config.email.brevoEmail
           },
           to: [{ email: options.to }],
           subject: options.subject,
@@ -192,7 +194,7 @@ export const sendKycApprovalEmail = async (email, firstName, restaurantName) => 
           <li>Generate reports and analytics</li>
         </ul>
         <p style="margin-top: 30px; text-align: center;">
-          <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/login" style="background: #4CAF50; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; display: inline-block;">
+          <a href="${config.client.url}/login" style="background: #4CAF50; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; display: inline-block;">
             Access Your Dashboard
           </a>
         </p>
@@ -222,7 +224,7 @@ export const sendKycRejectionEmail = async (email, firstName, reason) => {
         </div>
         <p>Please review the feedback and submit a new KYC application with the necessary corrections.</p>
         <p style="margin-top: 30px; text-align: center;">
-          <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/kyc/submit" style="background: #4CAF50; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; display: inline-block;">
+          <a href="${config.client.url}/kyc/submit" style="background: #4CAF50; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; display: inline-block;">
             Submit New KYC
           </a>
         </p>
@@ -238,7 +240,7 @@ export const sendKycRejectionEmail = async (email, firstName, reason) => {
 
 // User Invitation Email
 export const sendUserInvitationEmail = async (email, restaurantName, inviterName, inviteToken) => {
-  const inviteLink = `${process.env.CLIENT_URL || 'http://localhost:3000'}/accept-invite/${inviteToken}`;
+  const inviteLink = `${config.client.url}/accept-invite/${inviteToken}`;
 
   const html = `
     <div style="max-width: 600px; margin: 30px auto; background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 15px 40px rgba(0,0,0,0.15); font-family: Arial, sans-serif;">

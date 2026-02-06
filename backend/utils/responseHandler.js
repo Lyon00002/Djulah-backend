@@ -3,6 +3,8 @@
  * Ensures consistent response format across all endpoints
  */
 
+ import config from '../config/index.js';
+
 class ResponseHandler {
   /**
    * Success response for data retrieval (GET requests)
@@ -87,7 +89,7 @@ class ResponseHandler {
     };
 
     // Only include error details in development mode
-    if (errorDetails && process.env.NODE_ENV === 'development') {
+    if (errorDetails && config.env === 'development') {
       response.error = {
         details: errorDetails.message || errorDetails,
         stack: errorDetails.stack,

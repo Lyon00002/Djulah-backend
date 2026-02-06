@@ -2,12 +2,13 @@
 import mongoose from 'mongoose';
 import User from '../models/User.js';
 import dotenv from 'dotenv';
+import config from '../config/index.js';
 
 dotenv.config();
 
 async function verifyUser(email) {
   try {
-    await mongoose.connect(process.env.MONGODB_URI);
+    await mongoose.connect(config.db.mongoUri);
     
     const user = await User.findOne({ email });
     
